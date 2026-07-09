@@ -48,3 +48,13 @@ Default Hermes model is taken from the discovered catalog (prefers `qwen3-coder`
 ## Architecture
 
 See root README. Router = Atomic/Jan/Homebrew `llama-server` in multi-model preset mode on port 8080.
+
+## ADEs (Orca, etc.)
+
+ADEs do **not** load GGUFs. They launch Hermes (or another CLI). After install, Hermes already points at `http://127.0.0.1:8080/v1`, so any ADE that can start Hermes inherits local models for free.
+
+```
+ADE → Hermes → localhost:8080 router → GGUFs
+```
+
+Full write-up: root [README.md](../README.md#ades-orca-and-any-hermes-capable-agent-ide) (Orca notes, checklist, caveats, optional OpenAI-compatible agents).

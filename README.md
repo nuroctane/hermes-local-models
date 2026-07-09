@@ -4,6 +4,8 @@
 
 Works on **Windows** and **macOS** (Linux paths supported too). Download models in Atomic Chat or Jan → start Hermes → every finished GGUF appears in the model picker. Selecting one loads it on demand (one model in VRAM at a time by default).
 
+**ADEs included:** Install once, then any Agent Development Environment that can launch Hermes (Orca, and friends) gets the same local models — no per-ADE model stack.
+
 ## Why this exists
 
 Hermes does **not** load GGUF files. Atomic Chat / Jan store them on disk. This repo:
@@ -133,6 +135,51 @@ fallback_model:
 ```
 
 Change `fallback_model` to any cloud provider you’ve already set up in Hermes.
+
+## ADEs (Orca and any Hermes-capable agent IDE)
+
+**Agent Development Environments do not host models.** They launch coding agents in worktrees/terminals. Local GGUFs stay with this router + Hermes config; the ADE just runs Hermes.
+
+```
+ADE (Orca, …)  →  Hermes CLI / Desktop
+                      →  http://127.0.0.1:8080/v1  (this repo’s router)
+                           →  Atomic Chat / Jan GGUFs
+```
+
+### One install, every ADE
+
+1. Run `install.ps1` / `install.sh` (router + Hermes `config.yaml` patch).
+2. Keep the router up (`ensure_local_router.py start` or login Startup/LaunchAgent).
+3. Confirm models: `curl -s http://127.0.0.1:8080/v1/models`.
+4. In any ADE that supports **Hermes Agent**, start Hermes on a worktree — it uses the same global Hermes home (`%LOCALAPPDATA%\hermes` / `~/.hermes`) and therefore the same local models + cloud fallback.
+
+No Orca-specific (or other ADE-specific) plugin is required. Hermes config is shared across Desktop, CLI, and ADE-launched terminals.
+
+### [Orca](https://www.onorca.dev/docs)
+
+- Orca is explicitly **not a model provider** — bring your own agent.
+- **Hermes Agent** is a supported/preconfigured CLI in Orca.
+- Launch Hermes from the agent picker (or `orca worktree create --agent hermes …` when available). Same local catalog as outside Orca.
+
+### Other ADEs / CLIs
+
+| Path | How local models work |
+|------|------------------------|
+| ADE → **Hermes** | Prefer this. Install hermes-local-models once; every Hermes launch is local-ready. |
+| Agent with **OpenAI-compatible** custom base URL | Point at `http://127.0.0.1:8080/v1` and pick model ids from `/v1/models`. This repo only auto-patches Hermes; other agents are manual. |
+
+### ADE checklist
+
+- [ ] Router healthy (`ensure_local_router.py status` / `curl …/v1/models`)
+- [ ] Hermes works outside the ADE (`hermes chat -m <id>` or Desktop Local launcher)
+- [ ] ADE can find the Hermes binary on PATH
+- [ ] If traffic goes to cloud only: check router is up and `fallback_model` is not the only path
+
+### ADE caveats
+
+- **VRAM:** default is one heavy model loaded (`--models-max 1`). Many parallel Hermes sessions may swap models.
+- **Remote/SSH worktrees:** `127.0.0.1:8080` is on the machine running the router. Tunnel or run the router on the remote host if agents run elsewhere.
+- **Tool quality** still depends on the local model, not the ADE.
 
 ## Platform notes
 
