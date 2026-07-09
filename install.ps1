@@ -20,6 +20,7 @@ $files = @(
   "sync_atomic_models.py",
   "ensure_local_router.py",
   "start_hermes_desktop_local.py",
+  "patch_hermes_config.py",
   "start-hermes-local.ps1"
 )
 foreach ($f in $files) {
