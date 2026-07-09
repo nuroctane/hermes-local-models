@@ -1,61 +1,37 @@
-# Local models — runless Hermes Desktop
+# Local models — runless Hermes (Windows + macOS)
 
-**Goal:** Open Hermes and see **all finished Atomic Chat GGUFs**. Pick one; it loads on demand.
+**Goal:** Open Hermes and see **all finished Atomic Chat / Jan GGUFs**. Pick one; it loads on demand.
 
-## Architecture
+## Paths by OS
 
-```
-Atomic Chat downloads GGUFs
-        |
-        v  sync_atomic_models.py
-  models-preset.ini
-        |
-        v  ensure_local_router.py
-  llama-server ROUTER  http://127.0.0.1:8080/v1
-  GET /v1/models -> every finished GGUF
-  chat model X  -> loads that GGUF (max 1 in VRAM)
-        |
-        v
-  Hermes Desktop / CLI (custom provider)
-```
+| | Windows | macOS |
+|--|---------|--------|
+| Hermes home | `%LOCALAPPDATA%\hermes` | `~/.hermes` |
+| Models | `%APPDATA%\Atomic Chat\data\llamacpp\models` | `~/Library/Application Support/Atomic Chat/data/llamacpp/models` or `…/Jan/data/llamacpp/models` |
+| Scripts (after install) | `%LOCALAPPDATA%\hermes\scripts` | `~/.hermes/scripts` |
+| Preset | `…/local-models/models-preset.ini` | same under Hermes home |
+
+Overrides: `HERMES_HOME`, `ATOMIC_MODELS_DIR`, `JAN_MODELS_DIR`, `LLAMA_SERVER`, `HERMES_LOCAL_PORT`.
 
 ## Install
 
-See root [README.md](../README.md).
+- Windows: `install.ps1`
+- macOS/Linux: `install.sh` (see root README)
 
 ## Day-to-day
 
-```powershell
-# One-click Desktop
-python $env:LOCALAPPDATA\hermes\scripts\start_hermes_desktop_local.py
+```bash
+# Ensure router + Desktop
+python3 ~/.hermes/scripts/start_hermes_desktop_local.py   # Mac
+python  %LOCALAPPDATA%\hermes\scripts\start_hermes_desktop_local.py  # Win
 
-# Or ensure router only
-python $env:LOCALAPPDATA\hermes\scripts\ensure_local_router.py start
-python $env:LOCALAPPDATA\hermes\scripts\ensure_local_router.py status
-python $env:LOCALAPPDATA\hermes\scripts\ensure_local_router.py restart
-python $env:LOCALAPPDATA\hermes\scripts\ensure_local_router.py stop
+# Router only
+python3 ensure_local_router.py start|stop|status|restart
+python3 ensure_local_router.py start --cpu
 ```
 
-After a new Atomic download finishes (no `.tmp`):
+After a new GGUF download finishes: `ensure_local_router.py restart`.
 
-```powershell
-python $env:LOCALAPPDATA\hermes\scripts\ensure_local_router.py restart
-```
+## Architecture
 
-## Paths
-
-| Item | Path |
-|------|------|
-| Scripts | `%LOCALAPPDATA%\hermes\scripts\` |
-| Preset | `%LOCALAPPDATA%\hermes\local-models\models-preset.ini` |
-| Catalog | `%LOCALAPPDATA%\hermes\local-models\catalog.json` |
-| Logs | `%LOCALAPPDATA%\hermes\logs\local-router.*.log` |
-| Atomic GGUFs | `%APPDATA%\Atomic Chat\data\llamacpp\models\` |
-| llama-server | Atomic Chat CUDA/CPU backends |
-
-## Hermes config
-
-- Primary: `custom` → `http://127.0.0.1:8080/v1`
-- Default model: `qwen3-coder` (when present)
-- Context: `65536` (Hermes agent minimum)
-- Fallback: cloud (e.g. nvidia) if router is down
+See root README. Router = Atomic/Jan/Homebrew `llama-server` in multi-model preset mode on port 8080.

@@ -17,6 +17,7 @@ if (-not $Py) { throw "python not found on PATH" }
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 
 $files = @(
+  "paths.py",
   "sync_atomic_models.py",
   "ensure_local_router.py",
   "start_hermes_desktop_local.py",

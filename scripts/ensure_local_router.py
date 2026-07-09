@@ -1,51 +1,22 @@
 #!/usr/bin/env python3
-"""Ensure llama-server router lists all Atomic Chat GGUFs on :8080."""
+"""Ensure llama-server router lists all Atomic/Jan GGUFs on :8080 (Windows + macOS + Linux)."""
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import signal
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
-import urllib.request
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from paths import SYSTEM, find_llama_server, hermes_paths  # noqa: E402
 
-LOCALAPPDATA = Path(os.environ.get("LOCALAPPDATA", ""))
-APPDATA = Path(os.environ.get("APPDATA", ""))
-# Prefer scripts next to this file (repo or installed copy)
 SCRIPTS = Path(__file__).resolve().parent
-PRESET = LOCALAPPDATA / "hermes" / "local-models" / "models-preset.ini"
-LOG_DIR = LOCALAPPDATA / "hermes" / "logs"
-OUT_LOG = LOG_DIR / "local-router.out.log"
-ERR_LOG = LOG_DIR / "local-router.err.log"
-
-CUDA_SERVER = (
-    APPDATA
-    / "Atomic Chat"
-    / "data"
-    / "llamacpp"
-    / "backends"
-    / "turboquant-windows-x64-cuda-13.3-61ee3eb"
-    / "windows-x64-cuda-13.3"
-    / "build"
-    / "bin"
-    / "llama-server.exe"
-)
-CPU_SERVER = (
-    APPDATA
-    / "Atomic Chat"
-    / "data"
-    / "llamacpp"
-    / "backends"
-    / "turboquant-windows-x64-cpu-61ee3eb"
-    / "windows-x64-cpu"
-    / "build"
-    / "bin"
-    / "llama-server.exe"
-)
-
-PORT = 8080
+PORT = int(os.environ.get("HERMES_LOCAL_PORT", "8080"))
 
 
 def sync() -> None:
@@ -53,19 +24,47 @@ def sync() -> None:
 
 
 def listener_pid(port: int = PORT) -> int | None:
+    if SYSTEM == "Windows":
+        try:
+            out = subprocess.check_output(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    f"(Get-NetTCPConnection -LocalPort {port} -State Listen -EA SilentlyContinue | Select-Object -First 1).OwningProcess",
+                ],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            if out.isdigit():
+                return int(out)
+        except Exception:
+            pass
+        return None
+    # macOS / Linux
     try:
         out = subprocess.check_output(
-            [
-                "powershell",
-                "-NoProfile",
-                "-Command",
-                f"(Get-NetTCPConnection -LocalPort {port} -State Listen -EA SilentlyContinue | Select-Object -First 1).OwningProcess",
-            ],
+            ["lsof", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
             text=True,
             stderr=subprocess.DEVNULL,
         ).strip()
-        if out.isdigit():
-            return int(out)
+        for line in out.splitlines():
+            line = line.strip()
+            if line.isdigit():
+                return int(line)
+    except Exception:
+        pass
+    try:
+        out = subprocess.check_output(
+            ["ss", "-lptn", f"sport = :{port}"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        import re
+
+        m = re.search(r"pid=(\d+)", out)
+        if m:
+            return int(m.group(1))
     except Exception:
         pass
     return None
@@ -74,8 +73,6 @@ def listener_pid(port: int = PORT) -> int | None:
 def fetch_models(port: int = PORT):
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=5) as r:
-            import json
-
             return json.loads(r.read().decode())
     except Exception:
         return None
@@ -83,18 +80,36 @@ def fetch_models(port: int = PORT):
 
 def stop() -> None:
     pid = listener_pid()
-    if pid:
-        subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
-        time.sleep(1)
-        print(f"Stopped pid {pid} on port {PORT}")
-    else:
+    if not pid:
         print(f"No listener on port {PORT}")
+        return
+    if SYSTEM == "Windows":
+        subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
+    else:
+        try:
+            os.kill(pid, signal.SIGTERM)
+            time.sleep(0.5)
+            try:
+                os.kill(pid, 0)
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        except ProcessLookupError:
+            pass
+    time.sleep(1)
+    print(f"Stopped pid {pid} on port {PORT}")
 
 
 def start(cpu: bool = False, models_max: int = 1) -> None:
+    hp = hermes_paths()
+    preset = hp["preset"]
+    out_log = hp["out_log"]
+    err_log = hp["err_log"]
+    hp["logs"].mkdir(parents=True, exist_ok=True)
+
     sync()
-    if not PRESET.is_file():
-        raise SystemExit(f"Preset missing: {PRESET}")
+    if not preset.is_file():
+        raise SystemExit(f"Preset missing: {preset}")
 
     pid = listener_pid()
     api = fetch_models()
@@ -107,17 +122,22 @@ def start(cpu: bool = False, models_max: int = 1) -> None:
         print("Port busy but API unhealthy - restarting")
         stop()
 
-    server = CPU_SERVER if cpu or not CUDA_SERVER.is_file() else CUDA_SERVER
-    if not server.is_file():
-        raise SystemExit(f"llama-server.exe not found: {server}")
+    server = find_llama_server(prefer_cpu=cpu)
+    if not server:
+        raise SystemExit(
+            "llama-server not found.\n"
+            "  Windows: install/open Atomic Chat once so backends download.\n"
+            "  macOS:   brew install llama.cpp   OR use Atomic/Jan backends under\n"
+            "           ~/Library/Application Support/\n"
+            "  Or set LLAMA_SERVER=/path/to/llama-server"
+        )
 
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    # Metal (mac) and CUDA both use high n-gpu-layers; --cpu forces 0
     ngl = "0" if cpu else "99"
-    # Router mode: models-preset, no single -m
     args = [
         str(server),
         "--models-preset",
-        str(PRESET),
+        str(preset),
         "--host",
         "127.0.0.1",
         "--port",
@@ -131,19 +151,24 @@ def start(cpu: bool = False, models_max: int = 1) -> None:
         "--jinja",
     ]
     print("Starting local model router")
+    print(f"  system : {SYSTEM}")
     print(f"  server : {server}")
-    print(f"  preset : {PRESET}")
+    print(f"  preset : {preset}")
     print(f"  port   : {PORT}")
     print(f"  api    : http://127.0.0.1:{PORT}/v1")
 
-    with open(OUT_LOG, "w", encoding="utf-8") as out, open(ERR_LOG, "w", encoding="utf-8") as err:
-        subprocess.Popen(
-            args,
-            cwd=str(server.parent),
-            stdout=out,
-            stderr=err,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
+    popen_kwargs: dict = {
+        "cwd": str(server.parent),
+        "stdout": open(out_log, "w", encoding="utf-8"),
+        "stderr": open(err_log, "w", encoding="utf-8"),
+    }
+    if SYSTEM == "Windows":
+        popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    else:
+        # Detach from controlling terminal on Unix
+        popen_kwargs["start_new_session"] = True
+
+    subprocess.Popen(args, **popen_kwargs)
 
     print("Waiting for /v1/models ...")
     for i in range(90):
@@ -157,8 +182,8 @@ def start(cpu: bool = False, models_max: int = 1) -> None:
         if i % 10 == 0:
             print(f"  still starting... {i * 2} sec")
     print("Failed. Tail of error log:")
-    if ERR_LOG.is_file():
-        print(ERR_LOG.read_text(encoding="utf-8", errors="replace")[-2000:])
+    if err_log.is_file():
+        print(err_log.read_text(encoding="utf-8", errors="replace")[-2000:])
     raise SystemExit(2)
 
 
@@ -174,14 +199,14 @@ def status() -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="Hermes local multi-model router (Atomic/Jan GGUFs)")
     ap.add_argument(
         "action",
         nargs="?",
         default="start",
         choices=["start", "stop", "restart", "status", "sync"],
     )
-    ap.add_argument("--cpu", action="store_true")
+    ap.add_argument("--cpu", action="store_true", help="Force CPU (ngl 0)")
     ap.add_argument("--models-max", type=int, default=1)
     args = ap.parse_args()
 

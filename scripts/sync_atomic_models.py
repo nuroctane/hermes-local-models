@@ -1,20 +1,16 @@
 #!/usr/bin/env python3
-"""Scan Atomic Chat GGUFs and write llama-server models-preset.ini for router mode."""
+"""Scan Atomic Chat / Jan GGUFs and write llama-server models-preset.ini (cross-platform)."""
 from __future__ import annotations
 
 import json
-import os
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-APPDATA = Path(os.environ.get("APPDATA", ""))
-LOCALAPPDATA = Path(os.environ.get("LOCALAPPDATA", ""))
-MODELS_ROOT = APPDATA / "Atomic Chat" / "data" / "llamacpp" / "models"
-OUT_DIR = LOCALAPPDATA / "hermes" / "local-models"
-PRESET_PATH = OUT_DIR / "models-preset.ini"
-CATALOG_PATH = OUT_DIR / "catalog.json"
-CONFIG_PATH = LOCALAPPDATA / "hermes" / "config.yaml"
+# Allow running as installed copy next to paths.py
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from paths import find_model_roots, hermes_paths  # noqa: E402
 
 ALIAS_MAP = {
     "qwen3-coder-30b-a3b-IQ4_XS": "qwen3-coder",
@@ -26,43 +22,95 @@ ALIAS_MAP = {
 
 def slug_for(gguf: Path) -> str:
     folder = gguf.parent.name
+    stem = gguf.stem
+    # Prefer folder alias, then stem alias
     if folder in ALIAS_MAP:
         return ALIAS_MAP[folder]
-    s = re.sub(r"[^\w.\-]+", "-", folder).strip("-").lower()
+    if stem in ALIAS_MAP:
+        return ALIAS_MAP[stem]
+    base = folder if folder and folder not in (".",) else stem
+    if base.lower() in ("model", "models"):
+        base = stem
+    s = re.sub(r"[^\w.\-]+", "-", base).strip("-").lower()
     return s or f"model-{gguf.stat().st_size}"
 
 
+def iter_ggufs(root: Path):
+    """Yield complete GGUF files under root (Jan/Atomic layouts)."""
+    # Atomic: .../Name/model.gguf
+    for gguf in root.rglob("model.gguf"):
+        yield gguf
+    # Jan / other: .../name/*.gguf (not named model.gguf)
+    for gguf in root.rglob("*.gguf"):
+        if gguf.name == "model.gguf":
+            continue
+        if gguf.name.endswith(".tmp") or "mmproj" in gguf.name.lower():
+            continue
+        yield gguf
+
+
+def is_complete(gguf: Path) -> bool:
+    if not gguf.is_file():
+        return False
+    if gguf.name.endswith(".tmp"):
+        return False
+    if (gguf.parent / f"{gguf.name}.tmp").exists():
+        return False
+    if (gguf.parent / "model.gguf.tmp").exists() and gguf.name == "model.gguf":
+        return False
+    try:
+        if gguf.stat().st_size < 1_000_000:
+            return False
+    except OSError:
+        return False
+    return True
+
+
 def discover() -> list[dict]:
-    if not MODELS_ROOT.is_dir():
-        raise SystemExit(f"Atomic models root not found: {MODELS_ROOT}")
+    roots = find_model_roots()
+    if not roots:
+        tried = "\n  ".join(str(r) for r in __import__("paths").candidate_model_roots())
+        raise SystemExit(
+            "No Atomic Chat / Jan models directory found.\n"
+            "Looked under Application Support / APPDATA for Atomic Chat and Jan.\n"
+            f"Tried:\n  {tried}\n"
+            "Set ATOMIC_MODELS_DIR or JAN_MODELS_DIR to your models folder."
+        )
     found: dict[str, dict] = {}
-    for gguf in MODELS_ROOT.rglob("model.gguf"):
-        if not gguf.is_file():
-            continue
-        if (gguf.parent / "model.gguf.tmp").exists():
-            continue
-        size = gguf.stat().st_size
-        if size < 1_000_000:
-            continue
-        sid = slug_for(gguf)
-        prev = found.get(sid)
-        if prev is None or size > prev["size"]:
-            found[sid] = {
-                "id": sid,
-                "path": str(gguf.resolve()),
-                "size": size,
-                "folder": gguf.parent.name,
-            }
+    sources: list[str] = []
+    for root in roots:
+        sources.append(str(root))
+        for gguf in iter_ggufs(root):
+            if not is_complete(gguf):
+                continue
+            size = gguf.stat().st_size
+            sid = slug_for(gguf)
+            prev = found.get(sid)
+            if prev is None or size > prev["size"]:
+                found[sid] = {
+                    "id": sid,
+                    "path": str(gguf.resolve()),
+                    "size": size,
+                    "folder": gguf.parent.name,
+                    "root": str(root),
+                }
     if not found:
-        raise SystemExit(f"No complete model.gguf under {MODELS_ROOT}")
+        raise SystemExit(
+            "No complete GGUF files found under:\n  " + "\n  ".join(sources)
+        )
     return sorted(found.values(), key=lambda x: x["id"])
 
 
-def write_preset(entries: list[dict]) -> None:
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
+def write_preset(entries: list[dict]) -> Path:
+    hp = hermes_paths()
+    out_dir = hp["local_models"]
+    preset = hp["preset"]
+    catalog = hp["catalog"]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    roots = sorted({e.get("root", "") for e in entries})
     lines = [
         f"# Auto-generated by sync_atomic_models.py at {datetime.now(timezone.utc).isoformat()}",
-        f"# Source: {MODELS_ROOT}",
+        f"# Sources: {'; '.join(roots)}",
         "",
         "[*]",
         "ctx-size = 65536",
@@ -78,19 +126,21 @@ def write_preset(entries: list[dict]) -> None:
             "ctx-size = 65536",
             "",
         ]
-    PRESET_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    CATALOG_PATH.write_text(json.dumps(entries, indent=2), encoding="utf-8")
-    print(f"Wrote {len(entries)} models -> {PRESET_PATH}")
+    preset.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    catalog.write_text(json.dumps(entries, indent=2), encoding="utf-8")
+    print(f"Wrote {len(entries)} models -> {preset}")
     for e in entries:
         gb = e["size"] / (1024**3)
         print(f"  {e['id']}  ({gb:.1f} GB)  {e['folder']}")
+    return preset
 
 
 def patch_hermes_config(entries: list[dict]) -> None:
-    if not CONFIG_PATH.is_file():
+    config = hermes_paths()["config"]
+    if not config.is_file():
         print("No config.yaml to patch")
         return
-    text = CONFIG_PATH.read_text(encoding="utf-8")
+    text = config.read_text(encoding="utf-8")
     models_yaml = "\n".join(
         f"      {e['id']}:\n        context_length: 65536" for e in entries
     )
@@ -111,7 +161,7 @@ def patch_hermes_config(entries: list[dict]) -> None:
     )
     if pattern.search(text):
         text2 = pattern.sub(block, text, count=1)
-        CONFIG_PATH.write_text(text2, encoding="utf-8", newline="\n")
+        config.write_text(text2, encoding="utf-8", newline="\n")
         print("Updated Hermes config.yaml model catalog")
     else:
         print("Note: custom_providers.atomic-local block not found; catalog.json only")
