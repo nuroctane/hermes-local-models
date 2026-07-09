@@ -70,6 +70,77 @@ def listener_pid(port: int = PORT) -> int | None:
     return None
 
 
+def process_cmdline(pid: int) -> str:
+    """Best-effort command line / image name for pid (lowercased)."""
+    if SYSTEM == "Windows":
+        try:
+            out = subprocess.check_output(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    f"(Get-CimInstance Win32_Process -Filter \"ProcessId={pid}\").CommandLine",
+                ],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            if out:
+                return out.lower()
+        except Exception:
+            pass
+        try:
+            out = subprocess.check_output(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-Command",
+                    f"(Get-Process -Id {pid} -EA SilentlyContinue).ProcessName",
+                ],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            return out.lower()
+        except Exception:
+            pass
+        return ""
+    # Unix: args, then comm
+    try:
+        out = subprocess.check_output(
+            ["ps", "-p", str(pid), "-o", "args="],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        if out:
+            return out.lower()
+    except Exception:
+        pass
+    try:
+        out = subprocess.check_output(
+            ["ps", "-p", str(pid), "-o", "comm="],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+        return out.lower()
+    except Exception:
+        pass
+    # Linux /proc fallback
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode(
+            "utf-8", errors="replace"
+        )
+        return cmdline.lower()
+    except Exception:
+        pass
+    return ""
+
+
+def is_llama_server_pid(pid: int) -> bool:
+    cmd = process_cmdline(pid)
+    if not cmd:
+        return False
+    return "llama-server" in cmd
+
+
 def fetch_models(port: int = PORT):
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=5) as r:
@@ -82,6 +153,14 @@ def stop() -> None:
     pid = listener_pid()
     if not pid:
         print(f"No listener on port {PORT}")
+        return
+    if not is_llama_server_pid(pid):
+        cmd = process_cmdline(pid) or "(unknown)"
+        print(
+            f"Port {PORT} is held by pid {pid}, which does not look like llama-server:\n"
+            f"  {cmd[:200]}\n"
+            f"Not killing it. Free the port manually or set HERMES_LOCAL_PORT."
+        )
         return
     if SYSTEM == "Windows":
         subprocess.run(["taskkill", "/PID", str(pid), "/F"], capture_output=True)
@@ -97,7 +176,7 @@ def stop() -> None:
         except ProcessLookupError:
             pass
     time.sleep(1)
-    print(f"Stopped pid {pid} on port {PORT}")
+    print(f"Stopped llama-server pid {pid} on port {PORT}")
 
 
 def start(cpu: bool = False, models_max: int = 1) -> None:
@@ -114,13 +193,22 @@ def start(cpu: bool = False, models_max: int = 1) -> None:
     pid = listener_pid()
     api = fetch_models()
     if pid and api and api.get("data"):
+        # Healthy OpenAI-compatible API on our port — already up
         print(f"Already up on :{PORT} (pid={pid})")
         for m in api["data"]:
             print(f"  {m.get('id')}")
         return
     if pid:
-        print("Port busy but API unhealthy - restarting")
-        stop()
+        if is_llama_server_pid(pid):
+            print("Port busy with llama-server but API unhealthy - restarting")
+            stop()
+        else:
+            cmd = process_cmdline(pid) or "(unknown)"
+            raise SystemExit(
+                f"Port {PORT} is in use by non-router process pid={pid}:\n"
+                f"  {cmd[:200]}\n"
+                f"Stop that process or set HERMES_LOCAL_PORT to another port."
+            )
 
     server = find_llama_server(prefer_cpu=cpu)
     if not server:
@@ -131,6 +219,16 @@ def start(cpu: bool = False, models_max: int = 1) -> None:
             "           ~/Library/Application Support/\n"
             "  Or set LLAMA_SERVER=/path/to/llama-server"
         )
+
+    # Ensure +x on Unix when we can (Atomic drops sometimes lack execute bit)
+    if SYSTEM != "Windows":
+        try:
+            mode = server.stat().st_mode
+            if not (mode & 0o111):
+                server.chmod(mode | 0o755)
+                print(f"  chmod +x {server}")
+        except OSError as e:
+            print(f"  warning: could not chmod {server}: {e}")
 
     # Metal (mac) and CUDA both use high n-gpu-layers; --cpu forces 0
     ngl = "0" if cpu else "99"
@@ -157,10 +255,12 @@ def start(cpu: bool = False, models_max: int = 1) -> None:
     print(f"  port   : {PORT}")
     print(f"  api    : http://127.0.0.1:{PORT}/v1")
 
+    out_fh = open(out_log, "w", encoding="utf-8")
+    err_fh = open(err_log, "w", encoding="utf-8")
     popen_kwargs: dict = {
         "cwd": str(server.parent),
-        "stdout": open(out_log, "w", encoding="utf-8"),
-        "stderr": open(err_log, "w", encoding="utf-8"),
+        "stdout": out_fh,
+        "stderr": err_fh,
     }
     if SYSTEM == "Windows":
         popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -168,7 +268,18 @@ def start(cpu: bool = False, models_max: int = 1) -> None:
         # Detach from controlling terminal on Unix
         popen_kwargs["start_new_session"] = True
 
-    subprocess.Popen(args, **popen_kwargs)
+    try:
+        subprocess.Popen(args, **popen_kwargs)
+    finally:
+        # Parent no longer needs these handles; child keeps its copies
+        try:
+            out_fh.close()
+        except Exception:
+            pass
+        try:
+            err_fh.close()
+        except Exception:
+            pass
 
     print("Waiting for /v1/models ...")
     for i in range(90):

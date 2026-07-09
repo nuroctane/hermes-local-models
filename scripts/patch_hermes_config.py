@@ -2,12 +2,26 @@
 """Idempotently wire Hermes config for local primary + cloud fallback (cross-platform)."""
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from paths import hermes_paths  # noqa: E402
+from paths import hermes_paths, preferred_default_model  # noqa: E402
+
+
+def load_catalog_ids() -> list[str]:
+    catalog = hermes_paths()["catalog"]
+    if not catalog.is_file():
+        return []
+    try:
+        data = json.loads(catalog.read_text(encoding="utf-8"))
+        if isinstance(data, list):
+            return [e["id"] for e in data if isinstance(e, dict) and e.get("id")]
+    except Exception:
+        pass
+    return []
 
 
 def main() -> int:
@@ -26,34 +40,63 @@ def main() -> int:
         backup.write_text(text, encoding="utf-8")
         print(f"Backup: {backup}")
 
-    new_model = """model:
-  default: qwen3-coder
-  provider: custom
-  base_url: http://127.0.0.1:8080/v1
-  # Hermes agent requires >= 64K reported context window
-  context_length: 65536
-"""
+    catalog_ids = load_catalog_ids()
+    default_id = preferred_default_model(catalog_ids)
+    if catalog_ids:
+        print(f"Default model from catalog: {default_id} ({len(catalog_ids)} models)")
+    else:
+        print(f"No catalog yet; default model: {default_id}")
+
+    # Build models block for custom_providers
+    if catalog_ids:
+        models_yaml = "\n".join(
+            f"      {mid}:\n        context_length: 65536" for mid in catalog_ids
+        )
+    else:
+        models_yaml = (
+            "      qwen3-coder:\n"
+            "        context_length: 65536\n"
+            "      gemma-3n:\n"
+            "        context_length: 65536"
+        )
+
+    new_model = (
+        "model:\n"
+        f"  default: {default_id}\n"
+        "  provider: custom\n"
+        "  base_url: http://127.0.0.1:8080/v1\n"
+        "  # Hermes agent requires >= 64K reported context window\n"
+        "  context_length: 65536\n"
+    )
     m = re.search(r"^model:\n(?:  .*\n)*?(?=^agent:)", text, re.M)
     if m:
         text = text[: m.start()] + new_model + text[m.end() :]
-        print("Updated model: primary -> local custom :8080")
+        print(f"Updated model: primary -> local custom :8080 (default={default_id})")
     else:
-        print("Warning: could not locate model: block")
+        # Try looser: just replace default under model if present
+        if re.search(r"^model:\n  default: ", text, re.M):
+            text = re.sub(
+                r"^(model:\n  default: )\S+",
+                rf"\g<1>{default_id}",
+                text,
+                count=1,
+                flags=re.M,
+            )
+            print(f"Updated model.default -> {default_id} (loose match)")
+        else:
+            print("Warning: could not locate model: block")
 
     if "name: atomic-local" not in text:
         text = (
             text.rstrip()
-            + """
+            + f"""
 
 # Local Atomic Chat / Jan bridge (hermes-local-models)
 custom_providers:
   - name: atomic-local
     base_url: http://127.0.0.1:8080/v1
     models:
-      qwen3-coder:
-        context_length: 65536
-      gemma-3n:
-        context_length: 65536
+{models_yaml}
 
 fallback_model:
   provider: nvidia
@@ -72,6 +115,15 @@ fallback_model:
 """
         )
         print("Appended fallback_model")
+    else:
+        # Keep default in sync when re-running patch after catalog exists
+        text = re.sub(
+            r"^(model:\n  default: )\S+",
+            rf"\g<1>{default_id}",
+            text,
+            count=1,
+            flags=re.M,
+        )
 
     config.write_text(text, encoding="utf-8", newline="\n")
     print(f"Wrote {config}")

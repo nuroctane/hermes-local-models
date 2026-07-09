@@ -10,7 +10,7 @@ from pathlib import Path
 
 # Allow running as installed copy next to paths.py
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from paths import find_model_roots, hermes_paths  # noqa: E402
+from paths import find_model_roots, hermes_paths, preferred_default_model  # noqa: E402
 
 ALIAS_MAP = {
     "qwen3-coder-30b-a3b-IQ4_XS": "qwen3-coder",
@@ -141,6 +141,7 @@ def patch_hermes_config(entries: list[dict]) -> None:
         print("No config.yaml to patch")
         return
     text = config.read_text(encoding="utf-8")
+    original = text
     models_yaml = "\n".join(
         f"      {e['id']}:\n        context_length: 65536" for e in entries
     )
@@ -160,11 +161,25 @@ def patch_hermes_config(entries: list[dict]) -> None:
         re.M,
     )
     if pattern.search(text):
-        text2 = pattern.sub(block, text, count=1)
-        config.write_text(text2, encoding="utf-8", newline="\n")
+        text = pattern.sub(block, text, count=1)
         print("Updated Hermes config.yaml model catalog")
     else:
         print("Note: custom_providers.atomic-local block not found; catalog.json only")
+
+    # Keep model.default aligned with catalog (prefer qwen3-coder if present)
+    default_id = preferred_default_model([e["id"] for e in entries])
+    if re.search(r"^model:\n  default: ", text, re.M):
+        text = re.sub(
+            r"^(model:\n  default: )\S+",
+            rf"\g<1>{default_id}",
+            text,
+            count=1,
+            flags=re.M,
+        )
+        print(f"Updated Hermes model.default -> {default_id}")
+
+    if text != original:
+        config.write_text(text, encoding="utf-8", newline="\n")
 
 
 def main() -> int:

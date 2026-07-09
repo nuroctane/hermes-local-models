@@ -16,6 +16,48 @@ SCRIPTS = Path(__file__).resolve().parent
 SYSTEM = platform.system()
 
 
+def _launch_mac_app(app_path: Path) -> bool:
+    """
+    Launch a .app bundle on macOS.
+    Prefer `open /path/App.app` (path form). Fall back to `open -a Name`.
+    """
+    # Canonical: open the bundle path (do NOT use -a with a full path)
+    try:
+        r = subprocess.run(
+            ["open", str(app_path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if r.returncode == 0:
+            print(f"Launched {app_path}")
+            return True
+        if r.stderr:
+            print(f"  open path failed: {r.stderr.strip()}")
+    except Exception as e:
+        print(f"  open path failed: {e}")
+
+    # Name-only fallback: "Hermes Desktop.app" -> "Hermes Desktop"
+    name = app_path.stem if app_path.suffix == ".app" else app_path.name
+    if name.endswith(".app"):
+        name = name[: -len(".app")]
+    try:
+        r = subprocess.run(
+            ["open", "-a", name],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if r.returncode == 0:
+            print(f"Launched via open -a {name!r}")
+            return True
+        if r.stderr:
+            print(f"  open -a failed: {r.stderr.strip()}")
+    except Exception as e:
+        print(f"  open -a failed: {e}")
+    return False
+
+
 def main() -> int:
     ensure = SCRIPTS / "ensure_local_router.py"
     rc = subprocess.call([sys.executable, str(ensure), "start"])
@@ -47,13 +89,29 @@ def main() -> int:
 
     for c in candidates:
         if SYSTEM == "Darwin" and c.suffix == ".app" and c.is_dir():
-            subprocess.Popen(["open", "-a", str(c)])
-            print(f"Launched {c}")
-            return 0
+            if _launch_mac_app(c):
+                return 0
+            continue
         if c.is_file():
             subprocess.Popen([str(c)])
             print(f"Launched {c}")
             return 0
+
+    # Name-only Mac attempt even if path candidates missing
+    if SYSTEM == "Darwin":
+        for name in ("Hermes Desktop", "Hermes"):
+            try:
+                r = subprocess.run(
+                    ["open", "-a", name],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if r.returncode == 0:
+                    print(f"Launched via open -a {name!r}")
+                    return 0
+            except Exception:
+                pass
 
     if SYSTEM == "Windows":
         hermes_cli = home / "hermes-agent" / "venv" / "Scripts" / "hermes.exe"

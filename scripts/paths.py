@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import stat
 from pathlib import Path
 
 SYSTEM = platform.system()  # Windows | Darwin | Linux
@@ -66,6 +67,49 @@ def find_model_roots() -> list[Path]:
     return [r for r in candidate_model_roots() if r.is_dir()]
 
 
+def preferred_default_model(model_ids: list[str]) -> str:
+    """Pick Hermes default model id from discovered catalog (prefer Qwen, then Gemma)."""
+    ids = list(model_ids)
+    for prefer in ("qwen3-coder", "gemma-3n", "laguna-xs"):
+        if prefer in ids:
+            return prefer
+    return ids[0] if ids else "qwen3-coder"
+
+
+def _backend_rank(path: Path) -> tuple[int, str]:
+    """
+    Higher rank = better default backend.
+    Prefer GPU/Metal/CUDA over CPU; avoid pure-cpu when accelerators exist.
+    """
+    s = str(path).lower().replace("\\", "/")
+    rank = 50
+    if any(tok in s for tok in ("metal", "apple", "vulkan", "hip", "rocm")):
+        rank = 100
+    elif "cuda" in s:
+        rank = 90
+    elif "cpu" in s and "cuda" not in s and "metal" not in s:
+        rank = 10
+    # Homebrew / system PATH binaries are good fallbacks on Mac
+    if "/opt/homebrew/" in s or "/usr/local/bin/" in s:
+        rank = max(rank, 80)
+    return (rank, s)
+
+
+def _is_runnable_binary(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    if SYSTEM == "Windows":
+        return path.suffix.lower() in (".exe", "") or path.name.lower().endswith("llama-server.exe")
+    try:
+        st = path.stat()
+        if st.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH):
+            return True
+        # Some app bundles drop binaries without +x; still try if regular file
+        return path.stat().st_size > 0
+    except OSError:
+        return False
+
+
 def find_llama_server(prefer_cpu: bool = False) -> Path | None:
     """Locate llama-server binary (Atomic/Jan backends, PATH, Homebrew)."""
     # Explicit override
@@ -123,7 +167,7 @@ def find_llama_server(prefer_cpu: bool = False) -> Path | None:
                 support / name / "llamacpp" / "backends",
             ]:
                 if base.is_dir():
-                    candidates += sorted(base.rglob("llama-server"), reverse=True)
+                    candidates += list(base.rglob("llama-server"))
         # Homebrew / PATH
         for name in ("llama-server", "llama-server.exe"):
             which = shutil.which(name)
@@ -135,7 +179,9 @@ def find_llama_server(prefer_cpu: bool = False) -> Path | None:
         ):
             candidates.append(brew)
 
+    # Dedup, filter runnable, rank
     seen: set[str] = set()
+    ranked: list[tuple[tuple[int, str], Path]] = []
     for c in candidates:
         try:
             key = str(c.resolve()) if c.exists() else str(c)
@@ -144,9 +190,22 @@ def find_llama_server(prefer_cpu: bool = False) -> Path | None:
         if key in seen:
             continue
         seen.add(key)
-        if c.is_file():
-            return c
-    return None
+        if not _is_runnable_binary(c):
+            continue
+        rank = _backend_rank(c)
+        if prefer_cpu:
+            # Invert: prefer cpu paths
+            s = str(c).lower()
+            if "cpu" in s and "cuda" not in s and "metal" not in s:
+                rank = (200, rank[1])
+            else:
+                rank = (rank[0] // 2, rank[1])
+        ranked.append((rank, c))
+
+    if not ranked:
+        return None
+    ranked.sort(key=lambda x: x[0], reverse=True)
+    return ranked[0][1]
 
 
 def hermes_paths() -> dict[str, Path]:

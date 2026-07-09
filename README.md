@@ -138,15 +138,42 @@ Change `fallback_model` to any cloud provider you’ve already set up in Hermes.
 
 ### macOS
 
-- Prefer **Metal** via Homebrew `llama-server` or Atomic/Jan mac backends (`-ngl 99`).
-- Hermes home is **`~/.hermes`**, not LocalAppData.
+- Prefer **Metal** via Homebrew `llama-server` or Atomic/Jan mac backends (`-ngl 99`). Backend discovery ranks Metal/Apple over CPU.
+- Hermes home is **`~/.hermes`**, not LocalAppData (override with `HERMES_HOME`).
 - LaunchAgent label: `xyz.nuroctane.hermes-local-router` under `~/Library/LaunchAgents/`.
-- Unload agent: `launchctl unload ~/Library/LaunchAgents/xyz.nuroctane.hermes-local-router.plist`
+  Uses an **absolute Python path** and a Homebrew-friendly `PATH` so login start works.
+- Unload agent:
+  ```bash
+  launchctl bootout gui/$(id -u)/xyz.nuroctane.hermes-local-router
+  # older macOS:
+  launchctl unload ~/Library/LaunchAgents/xyz.nuroctane.hermes-local-router.plist
+  ```
+- Desktop launch uses `open /path/App.app` (not `open -a` with a full path).
+
+#### Mac smoke check (first install)
+
+```bash
+# 1) Router lists models
+curl -s http://127.0.0.1:8080/v1/models | python3 -m json.tool
+
+# 2) LaunchAgent registered
+launchctl print gui/$(id -u)/xyz.nuroctane.hermes-local-router | head -40
+
+# 3) Logs if something fails
+tail -50 ~/.hermes/logs/local-router.err.log
+tail -50 ~/.hermes/logs/launchagent-router.err.log
+
+# 4) Desktop launcher
+open ~/Applications/Hermes\ Desktop\ Local\ Models.command
+```
+
+If step 1 fails: `brew install llama.cpp`, set `LLAMA_SERVER` if needed, then  
+`python3 ~/.hermes/scripts/ensure_local_router.py restart`.
 
 ### Windows
 
 - Uses Atomic Chat CUDA backend when present; `-Cpu` / `--cpu` forces CPU build.
-- Startup + Desktop `.lnk` shortcuts from `install.ps1`.
+- Startup + Desktop `.lnk` shortcuts from `install.ps1` (absolute `python` / `pythonw` paths).
 
 ## Limits
 

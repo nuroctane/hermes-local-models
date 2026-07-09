@@ -13,6 +13,21 @@ $Dest = Join-Path $env:LOCALAPPDATA "hermes\scripts"
 $DocsDest = Join-Path $env:LOCALAPPDATA "hermes"
 $Py = (Get-Command python -ErrorAction SilentlyContinue).Source
 if (-not $Py) { throw "python not found on PATH" }
+# Absolute interpreter (Startup shortcuts have a limited environment)
+try {
+  $PyAbs = & $Py -c "import sys; print(sys.executable)" 2>$null
+  if ($PyAbs -and (Test-Path $PyAbs)) { $Py = $PyAbs.Trim() }
+} catch {}
+Write-Host "Python: $Py"
+$Pyw = $null
+$pywCandidate = Join-Path (Split-Path $Py -Parent) "pythonw.exe"
+if (Test-Path $pywCandidate) {
+  $Pyw = $pywCandidate
+} else {
+  $PywCmd = Get-Command pythonw -ErrorAction SilentlyContinue
+  if ($PywCmd) { $Pyw = $PywCmd.Source }
+}
+if (-not $Pyw) { $Pyw = $Py }
 
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 
@@ -44,13 +59,13 @@ if (-not $NoShortcuts) {
 
   $startup = [Environment]::GetFolderPath("Startup")
   $sc1 = $Wsh.CreateShortcut((Join-Path $startup "Hermes Local Model Router.lnk"))
-  $sc1.TargetPath = "pythonw.exe"
+  $sc1.TargetPath = $Pyw
   $sc1.Arguments = "`"$(Join-Path $Dest 'ensure_local_router.py')`" start"
   $sc1.WorkingDirectory = $Dest
   $sc1.WindowStyle = 7
   $sc1.Description = "Start Hermes multi-model local router (Atomic Chat GGUFs)"
   $sc1.Save()
-  Write-Host "Startup: Hermes Local Model Router.lnk"
+  Write-Host "Startup: Hermes Local Model Router.lnk ($Pyw)"
 
   $desk = [Environment]::GetFolderPath("Desktop")
   $sc2 = $Wsh.CreateShortcut((Join-Path $desk "Hermes Desktop (Local Models).lnk"))

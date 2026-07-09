@@ -32,6 +32,19 @@ python3 ensure_local_router.py start --cpu
 
 After a new GGUF download finishes: `ensure_local_router.py restart`.
 
+## Mac smoke check
+
+```bash
+curl -s http://127.0.0.1:8080/v1/models | python3 -m json.tool
+launchctl print gui/$(id -u)/xyz.nuroctane.hermes-local-router | head
+tail -50 ~/.hermes/logs/local-router.err.log
+open ~/Applications/Hermes\ Desktop\ Local\ Models.command
+```
+
+`stop` only kills a process whose command line contains `llama-server` (won’t nuke random apps on :8080).
+
+Default Hermes model is taken from the discovered catalog (prefers `qwen3-coder`, then `gemma-3n`, else first id).
+
 ## Architecture
 
 See root README. Router = Atomic/Jan/Homebrew `llama-server` in multi-model preset mode on port 8080.
