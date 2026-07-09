@@ -173,7 +173,7 @@ If step 1 fails: `brew install llama.cpp`, set `LLAMA_SERVER` if needed, then
 ### Windows
 
 - Uses Atomic Chat CUDA backend when present; `-Cpu` / `--cpu` forces CPU build.
-- Startup + Desktop `.lnk` shortcuts from `install.ps1` (absolute `python` / `pythonw` paths).
+- `install.ps1` creates Startup router `.lnk` plus **`%USERPROFILE%\Scripts\Hermes Desktop (Local Models).lnk`** (not Desktop).
 
 ## Limits
 

@@ -67,14 +67,27 @@ if (-not $NoShortcuts) {
   $sc1.Save()
   Write-Host "Startup: Hermes Local Model Router.lnk ($Pyw)"
 
-  $desk = [Environment]::GetFolderPath("Desktop")
-  $sc2 = $Wsh.CreateShortcut((Join-Path $desk "Hermes Desktop (Local Models).lnk"))
+  # User Scripts folder (same place as Laboratory clone *.cmd tools) — not Desktop
+  $userScripts = Join-Path $env:USERPROFILE "Scripts"
+  if (-not (Test-Path $userScripts)) {
+    New-Item -ItemType Directory -Force -Path $userScripts | Out-Null
+  }
+  $launcherName = "Hermes Desktop (Local Models).lnk"
+  $sc2Path = Join-Path $userScripts $launcherName
+  $sc2 = $Wsh.CreateShortcut($sc2Path)
   $sc2.TargetPath = $Py
   $sc2.Arguments = "`"$(Join-Path $Dest 'start_hermes_desktop_local.py')`""
   $sc2.WorkingDirectory = $Dest
   $sc2.Description = "Ensure local models router then open Hermes Desktop"
   $sc2.Save()
-  Write-Host "Desktop: Hermes Desktop (Local Models).lnk"
+  Write-Host "Scripts: $sc2Path"
+
+  # Remove legacy Desktop shortcut if present
+  $legacyDesk = Join-Path ([Environment]::GetFolderPath("Desktop")) $launcherName
+  if (Test-Path $legacyDesk) {
+    Remove-Item -Force $legacyDesk
+    Write-Host "Removed legacy Desktop shortcut: $legacyDesk"
+  }
 }
 
 if (-not $SkipStart) {
