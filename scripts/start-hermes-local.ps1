@@ -1,4 +1,5 @@
-# Start llama-server for Hermes using Atomic Chat GGUF models (port 8080).
+# Legacy single-model launcher: start llama-server (llama.cpp) for Hermes (port 8080).
+# Prefer ensure_local_router.py + auto-llamacpp multi-model bridge.
 # Usage:
 #   .\start-hermes-local.ps1 coder
 #   .\start-hermes-local.ps1 gemma

@@ -1,6 +1,8 @@
-# Local models — runless Hermes (Windows + macOS)
+# Auto llama.cpp — Hermes local models (Windows + macOS)
 
-**Goal:** Open Hermes and see **all finished Atomic Chat / Jan GGUFs**. Pick one; it loads on demand.
+**Goal:** Hermes automatically uses **llama.cpp** (`llama-server`) for finished Atomic Chat / Jan GGUFs. Open Hermes, pick a model; it loads on demand.
+
+**Provider id:** `auto-llamacpp` (legacy name `atomic-local` is renamed on re-patch)
 
 ## Paths by OS
 
@@ -21,9 +23,9 @@ Overrides: `HERMES_HOME`, `ATOMIC_MODELS_DIR`, `JAN_MODELS_DIR`, `LLAMA_SERVER`,
 ## Day-to-day
 
 ```bash
-# Ensure router + Desktop
+# Ensure llama-server router + Desktop
 python3 ~/.hermes/scripts/start_hermes_desktop_local.py   # Mac
-python  %LOCALAPPDATA%\hermes\scripts\start_hermes_desktop_local.py  # Win
+python  %LOCALAPPDATA%\hermes\scripts/start_hermes_desktop_local.py  # Win
 
 # Router only
 python3 ensure_local_router.py start|stop|status|restart
@@ -38,7 +40,7 @@ After a new GGUF download finishes: `ensure_local_router.py restart`.
 curl -s http://127.0.0.1:8080/v1/models | python3 -m json.tool
 launchctl print gui/$(id -u)/xyz.nuroctane.hermes-local-router | head
 tail -50 ~/.hermes/logs/local-router.err.log
-open ~/Applications/Hermes\ Desktop\ Local\ Models.command
+open ~/Applications/Hermes\ Desktop\ \(Auto\ llama.cpp\).command
 ```
 
 `stop` only kills a process whose command line contains `llama-server` (won’t nuke random apps on :8080).
@@ -47,14 +49,14 @@ Default Hermes model is taken from the discovered catalog (prefers `qwen3-coder`
 
 ## Architecture
 
+```
+Hermes → auto-llamacpp → :8080 → llama-server (llama.cpp) → GGUFs
+```
+
 See root README. Router = Atomic/Jan/Homebrew `llama-server` in multi-model preset mode on port 8080.
 
 ## ADEs (Orca, etc.)
 
-ADEs do **not** load GGUFs. They launch Hermes (or another CLI). After install, Hermes already points at `http://127.0.0.1:8080/v1`, so any ADE that can start Hermes inherits local models for free.
+ADEs do **not** load GGUFs. They launch Hermes. After install, Hermes already points at `http://127.0.0.1:8080/v1` via **auto-llamacpp**, so any ADE that can start Hermes inherits local llama.cpp for free.
 
-```
-ADE → Hermes → localhost:8080 router → GGUFs
-```
-
-Full write-up: root [README.md](../README.md#ades-orca-and-any-hermes-capable-agent-ide) (Orca notes, checklist, caveats, optional OpenAI-compatible agents).
+Full write-up: root [README.md](../README.md#ades-orca-and-any-hermes-capable-agent-ide).

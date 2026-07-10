@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan Atomic Chat / Jan GGUFs and write llama-server models-preset.ini (cross-platform)."""
+"""Scan Atomic Chat / Jan GGUFs and write llama-server (llama.cpp) models-preset.ini."""
 from __future__ import annotations
 
 import json
@@ -136,35 +136,43 @@ def write_preset(entries: list[dict]) -> Path:
 
 
 def patch_hermes_config(entries: list[dict]) -> None:
+    """Refresh auto-llamacpp (or legacy atomic-local) model catalog in config.yaml."""
+    provider = "auto-llamacpp"
     config = hermes_paths()["config"]
     if not config.is_file():
         print("No config.yaml to patch")
         return
     text = config.read_text(encoding="utf-8")
     original = text
+    # Migrate legacy provider id before catalog rewrite
+    if "name: atomic-local" in text and f"name: {provider}" not in text:
+        text = text.replace("name: atomic-local", f"name: {provider}")
+        print(f"Renamed custom provider atomic-local -> {provider}")
     models_yaml = "\n".join(
         f"      {e['id']}:\n        context_length: 65536" for e in entries
     )
     block = (
         "custom_providers:\n"
-        "  - name: atomic-local\n"
+        f"  - name: {provider}\n"
         "    base_url: http://127.0.0.1:8080/v1\n"
-        "    # api_key omitted - local llama-server needs none\n"
+        "    # api_key omitted - local llama-server (llama.cpp) needs none\n"
         "    models:\n"
         f"{models_yaml}\n"
     )
     pattern = re.compile(
         r"^custom_providers:\n"
-        r"  - name: atomic-local\n"
+        rf"  - name: (?:{re.escape(provider)}|atomic-local)\n"
         r"(?:.*\n)*?"
         r"(?=^(?:# If local server|fallback_model:|\Z))",
         re.M,
     )
     if pattern.search(text):
         text = pattern.sub(block, text, count=1)
-        print("Updated Hermes config.yaml model catalog")
+        print(f"Updated Hermes config.yaml model catalog ({provider})")
     else:
-        print("Note: custom_providers.atomic-local block not found; catalog.json only")
+        print(
+            f"Note: custom_providers.{provider} block not found; catalog.json only"
+        )
 
     # Keep model.default aligned with catalog (prefer qwen3-coder if present)
     default_id = preferred_default_model([e["id"] for e in entries])

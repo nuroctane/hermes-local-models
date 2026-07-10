@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Idempotently wire Hermes config for local primary + cloud fallback (cross-platform)."""
+"""Idempotently wire Hermes config for auto-llamacpp primary + cloud fallback."""
 from __future__ import annotations
 
 import json
@@ -9,6 +9,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from paths import hermes_paths, preferred_default_model  # noqa: E402
+
+# User-facing custom provider id: Hermes auto-routes to local llama-server (llama.cpp)
+PROVIDER_NAME = "auto-llamacpp"
+LEGACY_PROVIDER_NAMES = ("atomic-local",)
 
 
 def load_catalog_ids() -> list[str]:
@@ -22,6 +26,53 @@ def load_catalog_ids() -> list[str]:
     except Exception:
         pass
     return []
+
+
+def models_yaml_block(catalog_ids: list[str]) -> str:
+    if catalog_ids:
+        return "\n".join(
+            f"      {mid}:\n        context_length: 65536" for mid in catalog_ids
+        )
+    return (
+        "      qwen3-coder:\n"
+        "        context_length: 65536\n"
+        "      gemma-3n:\n"
+        "        context_length: 65536"
+    )
+
+
+def ensure_provider_block(text: str, models_yaml: str) -> tuple[str, str]:
+    """
+    Ensure custom_providers contains auto-llamacpp.
+    Migrates legacy name atomic-local. Returns (text, note).
+    """
+    # Rename legacy provider ids
+    for legacy in LEGACY_PROVIDER_NAMES:
+        if f"name: {legacy}" in text:
+            text = text.replace(f"name: {legacy}", f"name: {PROVIDER_NAME}")
+            return (
+                text,
+                f"Renamed custom provider {legacy!r} -> {PROVIDER_NAME!r}",
+            )
+
+    if f"name: {PROVIDER_NAME}" in text:
+        return text, f"custom provider {PROVIDER_NAME!r} already present"
+
+    block = f"""
+
+# auto-llamacpp — Hermes primary via local llama-server (llama.cpp)
+# Discovers GGUFs (Atomic Chat / Jan), OpenAI-compatible on :8080
+custom_providers:
+  - name: {PROVIDER_NAME}
+    base_url: http://127.0.0.1:8080/v1
+    models:
+{models_yaml}
+
+fallback_model:
+  provider: nvidia
+  model: nvidia/nemotron-3-ultra-550b-a55b
+"""
+    return text.rstrip() + block, f"Appended custom_providers ({PROVIDER_NAME}) + fallback_model"
 
 
 def main() -> int:
@@ -47,33 +98,24 @@ def main() -> int:
     else:
         print(f"No catalog yet; default model: {default_id}")
 
-    # Build models block for custom_providers
-    if catalog_ids:
-        models_yaml = "\n".join(
-            f"      {mid}:\n        context_length: 65536" for mid in catalog_ids
-        )
-    else:
-        models_yaml = (
-            "      qwen3-coder:\n"
-            "        context_length: 65536\n"
-            "      gemma-3n:\n"
-            "        context_length: 65536"
-        )
+    models_yaml = models_yaml_block(catalog_ids)
 
     new_model = (
         "model:\n"
         f"  default: {default_id}\n"
         "  provider: custom\n"
         "  base_url: http://127.0.0.1:8080/v1\n"
+        "  # Primary: auto-llamacpp router (llama-server / llama.cpp) on :8080\n"
         "  # Hermes agent requires >= 64K reported context window\n"
         "  context_length: 65536\n"
     )
     m = re.search(r"^model:\n(?:  .*\n)*?(?=^agent:)", text, re.M)
     if m:
         text = text[: m.start()] + new_model + text[m.end() :]
-        print(f"Updated model: primary -> local custom :8080 (default={default_id})")
+        print(
+            f"Updated model: primary -> auto-llamacpp :8080 (default={default_id})"
+        )
     else:
-        # Try looser: just replace default under model if present
         if re.search(r"^model:\n  default: ", text, re.M):
             text = re.sub(
                 r"^(model:\n  default: )\S+",
@@ -86,25 +128,10 @@ def main() -> int:
         else:
             print("Warning: could not locate model: block")
 
-    if "name: atomic-local" not in text:
-        text = (
-            text.rstrip()
-            + f"""
+    text, note = ensure_provider_block(text, models_yaml)
+    print(note)
 
-# Local Atomic Chat / Jan bridge (hermes-local-models)
-custom_providers:
-  - name: atomic-local
-    base_url: http://127.0.0.1:8080/v1
-    models:
-{models_yaml}
-
-fallback_model:
-  provider: nvidia
-  model: nvidia/nemotron-3-ultra-550b-a55b
-"""
-        )
-        print("Appended custom_providers + fallback_model")
-    elif not re.search(r"^fallback_model:\n  provider:", text, re.M):
+    if not re.search(r"^fallback_model:\n  provider:", text, re.M):
         text = (
             text.rstrip()
             + """
@@ -116,7 +143,6 @@ fallback_model:
         )
         print("Appended fallback_model")
     else:
-        # Keep default in sync when re-running patch after catalog exists
         text = re.sub(
             r"^(model:\n  default: )\S+",
             rf"\g<1>{default_id}",

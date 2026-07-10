@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cross-platform paths for Hermes + Atomic Chat / Jan GGUFs."""
+"""Cross-platform paths for Hermes auto-llamacpp (Atomic Chat / Jan GGUFs + llama-server)."""
 from __future__ import annotations
 
 import os

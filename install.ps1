@@ -1,4 +1,5 @@
-# Install hermes-local-models into Hermes home and wire Desktop/Startup shortcuts.
+# Install hermes-local-models (auto-llamacpp) into Hermes home.
+# Wires Startup + Scripts shortcuts so Hermes auto-uses local llama-server.
 # Run from the repo root:
 #   powershell -ExecutionPolicy Bypass -File .\install.ps1
 param(
@@ -58,35 +59,56 @@ if (-not $NoShortcuts) {
   $Wsh = New-Object -ComObject WScript.Shell
 
   $startup = [Environment]::GetFolderPath("Startup")
-  $sc1 = $Wsh.CreateShortcut((Join-Path $startup "Hermes Local Model Router.lnk"))
+  $routerName = "Hermes Auto llama.cpp Router.lnk"
+  $sc1 = $Wsh.CreateShortcut((Join-Path $startup $routerName))
   $sc1.TargetPath = $Pyw
   $sc1.Arguments = "`"$(Join-Path $Dest 'ensure_local_router.py')`" start"
   $sc1.WorkingDirectory = $Dest
   $sc1.WindowStyle = 7
-  $sc1.Description = "Start Hermes multi-model local router (Atomic Chat GGUFs)"
+  $sc1.Description = "Start llama-server (llama.cpp) multi-model router for Hermes auto-llamacpp"
   $sc1.Save()
-  Write-Host "Startup: Hermes Local Model Router.lnk ($Pyw)"
+  Write-Host "Startup: $routerName ($Pyw)"
+
+  # Remove legacy Startup names
+  foreach ($legacy in @("Hermes Local Model Router.lnk")) {
+    $p = Join-Path $startup $legacy
+    if (Test-Path $p) {
+      Remove-Item -Force $p
+      Write-Host "Removed legacy Startup shortcut: $p"
+    }
+  }
 
   # User Scripts folder (same place as Laboratory clone *.cmd tools) — not Desktop
   $userScripts = Join-Path $env:USERPROFILE "Scripts"
   if (-not (Test-Path $userScripts)) {
     New-Item -ItemType Directory -Force -Path $userScripts | Out-Null
   }
-  $launcherName = "Hermes Desktop (Local Models).lnk"
+  $launcherName = "Hermes Desktop (Auto llama.cpp).lnk"
   $sc2Path = Join-Path $userScripts $launcherName
   $sc2 = $Wsh.CreateShortcut($sc2Path)
   $sc2.TargetPath = $Py
   $sc2.Arguments = "`"$(Join-Path $Dest 'start_hermes_desktop_local.py')`""
   $sc2.WorkingDirectory = $Dest
-  $sc2.Description = "Ensure local models router then open Hermes Desktop"
+  $sc2.Description = "Ensure auto-llamacpp router (llama-server) then open Hermes Desktop"
   $sc2.Save()
   Write-Host "Scripts: $sc2Path"
 
-  # Remove legacy Desktop shortcut if present
-  $legacyDesk = Join-Path ([Environment]::GetFolderPath("Desktop")) $launcherName
-  if (Test-Path $legacyDesk) {
-    Remove-Item -Force $legacyDesk
-    Write-Host "Removed legacy Desktop shortcut: $legacyDesk"
+  # Remove legacy Desktop / Scripts shortcuts
+  $desktop = [Environment]::GetFolderPath("Desktop")
+  foreach ($legacy in @(
+    "Hermes Desktop (Local Models).lnk",
+    "Hermes Desktop (Auto llama.cpp).lnk"
+  )) {
+    $legacyDesk = Join-Path $desktop $legacy
+    if (Test-Path $legacyDesk) {
+      Remove-Item -Force $legacyDesk
+      Write-Host "Removed legacy Desktop shortcut: $legacyDesk"
+    }
+  }
+  $legacyScripts = Join-Path $userScripts "Hermes Desktop (Local Models).lnk"
+  if (Test-Path $legacyScripts) {
+    Remove-Item -Force $legacyScripts
+    Write-Host "Removed legacy Scripts shortcut: $legacyScripts"
   }
 }
 
@@ -97,7 +119,8 @@ if (-not $SkipStart) {
 }
 
 Write-Host ""
-Write-Host "Install complete."
-Write-Host "  Docs:  $DocsDest\LOCAL_MODELS.md"
-Write-Host "  API:   http://127.0.0.1:8080/v1/models"
-Write-Host "  Start: python $Dest\ensure_local_router.py start"
+Write-Host "Install complete (auto-llamacpp)."
+Write-Host "  Docs:     $DocsDest\LOCAL_MODELS.md"
+Write-Host "  Provider: auto-llamacpp (Hermes -> llama-server / llama.cpp)"
+Write-Host "  API:      http://127.0.0.1:8080/v1/models"
+Write-Host "  Start:    python $Dest\ensure_local_router.py start"

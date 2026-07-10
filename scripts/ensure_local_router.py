@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ensure llama-server router lists all Atomic/Jan GGUFs on :8080 (Windows + macOS + Linux)."""
+"""Ensure llama-server (llama.cpp) lists Atomic/Jan GGUFs on :8080 for Hermes auto-llamacpp."""
 from __future__ import annotations
 
 import argparse
@@ -310,7 +310,9 @@ def status() -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Hermes local multi-model router (Atomic/Jan GGUFs)")
+    ap = argparse.ArgumentParser(
+        description="Hermes auto-llamacpp router — multi-model llama-server (llama.cpp)"
+    )
     ap.add_argument(
         "action",
         nargs="?",

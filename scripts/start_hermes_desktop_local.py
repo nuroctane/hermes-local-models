@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ensure multi-model router is up, then launch Hermes Desktop (Windows + macOS + Linux)."""
+"""Ensure auto-llamacpp router (llama-server) is up, then launch Hermes Desktop."""
 from __future__ import annotations
 
 import os

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Install hermes-local-models on macOS / Linux into Hermes home.
+# Install hermes-local-models (auto-llamacpp) on macOS / Linux into Hermes home.
+# Wires Hermes so it automatically uses local llama-server (llama.cpp).
 # Usage:
 #   chmod +x install.sh
 #   ./install.sh
@@ -150,7 +151,7 @@ EOF
       echo "  Check: launchctl print ${DOMAIN}/${LABEL}"
     fi
 
-    APP_SCRIPT="$HOME/Applications/Hermes Desktop Local Models.command"
+    APP_SCRIPT="$HOME/Applications/Hermes Desktop (Auto llama.cpp).command"
     mkdir -p "$HOME/Applications"
     cat > "$APP_SCRIPT" <<EOF
 #!/bin/bash
@@ -159,6 +160,12 @@ exec "$PY" "$DEST/start_hermes_desktop_local.py"
 EOF
     chmod +x "$APP_SCRIPT"
     echo "Launcher: $APP_SCRIPT"
+    # Remove legacy launcher name if present
+    LEGACY_APP="$HOME/Applications/Hermes Desktop Local Models.command"
+    if [[ -f "$LEGACY_APP" ]]; then
+      rm -f "$LEGACY_APP"
+      echo "Removed legacy launcher: $LEGACY_APP"
+    fi
   else
     # Linux: user systemd unit optional
     UNIT_DIR="$HOME/.config/systemd/user"
@@ -166,7 +173,7 @@ EOF
     UNIT="$UNIT_DIR/hermes-local-router.service"
     cat > "$UNIT" <<EOF
 [Unit]
-Description=Hermes local multi-model router (Atomic/Jan GGUFs)
+Description=Hermes auto-llamacpp router (llama-server / llama.cpp)
 After=network.target
 
 [Service]
@@ -205,9 +212,10 @@ if [[ "$SKIP_START" -eq 0 ]]; then
 fi
 
 echo ""
-echo "Install complete (Unix)."
+echo "Install complete (Unix, auto-llamacpp)."
 echo "  Hermes home: $HERMES_HOME"
 echo "  Docs:        $DOCS/LOCAL_MODELS.md"
+echo "  Provider:    auto-llamacpp (Hermes -> llama-server / llama.cpp)"
 echo "  API:         http://127.0.0.1:8080/v1/models"
 echo "  Start:       $PY $DEST/ensure_local_router.py start"
 echo ""
@@ -218,4 +226,4 @@ echo ""
 echo "Mac smoke check (after install):"
 echo "  curl -s http://127.0.0.1:8080/v1/models | python3 -m json.tool"
 echo "  launchctl print gui/\$(id -u)/xyz.nuroctane.hermes-local-router | head"
-echo "  open ~/Applications/Hermes\\ Desktop\\ Local\\ Models.command"
+echo "  open ~/Applications/Hermes\\ Desktop\\ \\(Auto\\ llama.cpp\\).command"
