@@ -7,3 +7,6 @@ __pycache__/
 venv/
 local-models/
 *.bak
+
+# Local agent instructions only (never publish to main)
+AGENTS.md
